@@ -63,7 +63,7 @@ if __name__ == "__main__":
     average_acc = []
     for doc_id in range(args.start, args.end):
         os.environ['DOC_ID'] = str(doc_id)
-        print("Running inference for doc_id: ", doc_id)
+        print("Running inference for doc_id: ", doc_id, " chunk_size: ", kv_tokens[doc_id])
         lmcache_config = LMCacheEngineConfig.from_defaults(chunk_size=kv_tokens[doc_id])
         meta_data = LMCacheEngineMetadata(model_name=args.model_id, fmt="huggingface", world_size=1, worker_id=0)
         deserializer = CacheGenDeserializer(lmcache_config, meta_data)
@@ -81,7 +81,7 @@ if __name__ == "__main__":
         output = model.generate(input_ids, past_key_values=decoded_kv, max_new_tokens=20)
         prediction = tokenizer.decode(output[0][input_ids.shape[1]:], skip_special_tokens=True)
         if args.calculate_metric == 1:
-            if args.dataset_name == "longchat":
+            if args.dataset_name == "longchat" or args.dataset_name == 'qasper':
                 metric = calculate_acc(args.dataset_name, prediction, data[doc_id]['label'])
                 average_acc += [metric]
             elif args.dataset_name == "nqa" or args.dataset_name == "tqa":
@@ -89,7 +89,7 @@ if __name__ == "__main__":
                 average_acc += [metric]
         if args.dataset_name == "longchat":
             print(prediction, data[doc_id]['label'][0])
-    if args.dataset_name == "longchat":
+    if args.dataset_name == "longchat" or args.dataset_name == "qasper":
         metric_name = "accuracy"
     else:
         metric_name = "F1 score"
