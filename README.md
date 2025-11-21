@@ -1,28 +1,30 @@
-# CacheGen: Fast Context Loading for Language Model Applications via KV Cache Streaming
+# Exploring CacheGen Under Realistic Scenarios
+Duke Advanced Computer Networks (COMPSCI 514 2025 Fall) Final Project
 
-**For the latest update and integration, please check out the [LMCache](https://github.com/LMCache/LMCache) project!**
+## Contributions
+Based on the official [CacheGen repo](https://github.com/UChi-JCL/CacheGen), we
+- Fix a KV cache extraction bug
+- Support the adaptation algorithm mentioned in the paper
+- Benchmark CacheGen with QASPER dataset
 
-This is the code repo for [CacheGen: Fast Context Loading for Language Model Applications via KV Cache Streaming](https://arxiv.org/pdf/2310.07240.pdf) (SIGCOMM'24). 
-The code structure is organized as follows:
+## Execute
+Please run `scripts/7b_qasper.sh`. It contains everything for QASPER benchmarking.
 
-- ```LMCache```: The modules for KV cache encoding / decoding with CacheGen's customized codec 
-- ```test_data```: The example testing cases for CacheGen. 
-- ```src```: Some helper functions used by CacheGen (e.g., transforming tensor to tuple, transforming tuple to tensor etc.)
-
-## Installation
-
-To install the required **python** packages to run CacheGen with conda
+### Details: Different quantization levels
+For CacheGen with different fixed quantization level, please modify Line#43 `os.environ["QUANT_LEVEL"] = "2"` into different level (1 to 3) in `run_cachegen.py`. And then,
 ```
-conda env create -f env.yaml
-conda activate cachegen
-pip install -e LMCache
-cd LMCache/third_party/torchac_cuda 
-python setup.py install
+$ python run_cachegen.py \
+    --model_id "mistral-community/Mistral-7B-v0.2" \
+    --save_dir ./mistral7b_qasper_data/ \
+    --start 0 \
+    --end 60 \
+    --num_gpus 1 \
+    --encoded_dir ./qasper_encoded \
+    --results_str cachegen \
+    --results_dir mistral7b_results/ \
+    --dataset_name qasper \
+    --calculate_metric 1
 ```
+### Details: Benchmark LongChat with the adaptation algorithm mentioned in the paper
+Run `scripts/adapt.sh`.
 
-### Examples 
-
-Please refer to the page [sigcomm_ae.md](sigcomm_ae.md) for running examples for CacheGen. 
-
-### Contact 
-Yuhan Liu (yuhanl@uchicago.edu)
