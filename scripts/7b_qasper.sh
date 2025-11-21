@@ -28,7 +28,6 @@ python run_vanilla.py \
     --end 60 \
     --calculate_metric 1
 
-
 python run_adaptation.py \
 --model_id "mistral-community/Mistral-7B-v0.2" \
 --num_gpus 1 \
@@ -38,7 +37,6 @@ python run_adaptation.py \
 --end 60 \
 --slo 0.5 \
 --encode
-
 
 python run_adaptation.py \
 --model_id "mistral-community/Mistral-7B-v0.2" \
@@ -52,7 +50,6 @@ python run_adaptation.py \
 --total_traces 5 \
 --calculate_metric 1 \
 --use_paper_algorithm
-
 
 python run_quantization_baseline.py \
     --model_id "mistral-community/Mistral-7B-v0.2" \
