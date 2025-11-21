@@ -1,3 +1,4 @@
+import math
 import torch
 from fastchat.model import load_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -61,7 +62,8 @@ REQ_TIME_GAP = 2
 DATASET_TO_PATH = {
     "longchat": "test_data/longchat.jsonl",
     "tqa": "test_data/tqa.jsonl",
-    "nqa": "test_data/nqa.jsonl"
+    "nqa": "test_data/nqa.jsonl",
+    "qasper": "test_data/qasper.jsonl",
 }
 
 
@@ -112,7 +114,36 @@ def chatgpt_auto_eval(gt_result, cachegen_result):
     print(f"Label: {gt_result}, Predict: {cachegen_result} - auto-eval goes with {output_string}")
 
     # To avoid rate limit by OPENAI
-    time.sleep(REQ_TIME_GAP)
+    # time.sleep(REQ_TIME_GAP)
+    time.sleep(0.5)
+    return correct
+
+def chatgpt_auto_eval_qasper(gt_result, cachegen_result):
+    print("--------------- Start auto-evaluation, you should verify it does this correctly --------------")
+    correct = 0
+    user_prompt = f"I am testing whether a LLM model can correctly retreieve the answer from a paper given the question, and would like you to help me judge whether the LLM output is correct. Please give me 1 for correct and 0 for incorrect and 0.5 for partially correct (don't be too stringent). Only give me a single number. Ignore mistakes if the model is paraphasing or using synonyms or having something else (as the LLM is a simple one). Ignore any simple mistakes such as capitalization and punctuation. The ground truth is {gt_result}, the LLM prediction is {cachegen_result}"
+
+    content = get_eval(user_prompt)
+
+    if content == '1':
+        _correct = 1
+        output_string = "correct"
+    elif content == '0.5':
+        _correct = 0
+        output_string = "partial correct"
+    else:
+        _correct = 0
+        output_string = "wrong"
+    # _correct = content == "1"
+    correct += _correct
+
+    # output_string = "correct" if _correct else "wrong"
+
+    print(f"Label: {gt_result}, Predict: {cachegen_result} - auto-eval goes with {output_string}")
+
+    # To avoid rate limit by OPENAI
+    # time.sleep(REQ_TIME_GAP)
+    time.sleep(0.5)
     return correct
 
 def to_blob(kv_tuples):
@@ -122,6 +153,8 @@ def to_blob(kv_tuples):
 def calculate_acc(dataset_name, prediction, label):
     if dataset_name == "longchat":
         return chatgpt_auto_eval(label[0], prediction)
+    elif dataset_name == 'qasper':
+        return chatgpt_auto_eval_qasper(label[0], prediction)
     elif dataset_name == "nqa":
         scores = scorer_e(dataset_name, [prediction], [label['answers']], [label['all_classes']])
         return scores[0]
@@ -292,7 +325,8 @@ def bw_generator(num_chunks):
     return bw
 
 def config_selection(all_bws, chunk_delay, args, length, doc_id):
-    num_chunks = round(length / args.chunk_size)
+    # num_chunks = round(length / args.chunk_size)
+    num_chunks = math.ceil(length / args.chunk_size)
     chunk_id = 0
     ttft = 0
     configs = []
@@ -300,7 +334,7 @@ def config_selection(all_bws, chunk_delay, args, length, doc_id):
         bw = all_bws[chunk_id]
         found_cache = False
         
-        for quant_level in np.arange(3, 0, -1):
+        for quant_level in np.arange(3, 0, -1):  # bad to good
             bytestream = pickle.load(open(f"{args.save_dir}/{doc_id}_{chunk_id}_{quant_level}.pkl", "rb"))
             if len(bytestream) / 1e9 * 8 / bw < args.slo / num_chunks:
                 ttft += len(bytestream) / 1e9 * 8 / bw
@@ -312,6 +346,77 @@ def config_selection(all_bws, chunk_delay, args, length, doc_id):
             configs += [0]
         chunk_id += 1
     return ttft, configs
+
+def config_selection_paper(all_bws, chunk_delay, args, length, doc_id):
+    """
+    CacheGen Algorithm 1-style config selection.
+
+    all_bws: list of per-chunk throughput (Gbps)
+    chunk_delay: recomputation time for a single chunk (seconds)
+    args: has fields slo, chunk_size, save_dir, ...
+    length: total token length
+    doc_id: which document we are simulating
+    """
+    # number of chunks for this document
+    num_chunks = math.ceil(length / args.chunk_size)
+
+    ttft = 0.0                  # time_elapsed in Algorithm 1
+    configs = []                # per-chunk decision: 0=recompute, 1/2/3=quant levels
+
+    # chunks_to_send: indices of remaining chunks (0 .. num_chunks-1)
+    for chunk_id in range(num_chunks):
+        # chunk bandwidth（Gbps）
+        bw = all_bws[chunk_id]
+
+        # left time
+        remaining_time = args.slo - ttft
+        if remaining_time <= 0:
+            best_level = 3
+            bytestream = pickle.load(
+                open(f"{args.save_dir}/{doc_id}_{chunk_id}_{best_level}.pkl", "rb")
+            )
+            download_time = len(bytestream) / 1e9 * 8.0 / bw
+            ttft += download_time
+            configs.append(best_level)
+            continue
+
+        if chunk_delay <= remaining_time:
+            ttft += chunk_delay
+            configs.append(0)
+            continue
+
+        # level ← max level | size(chunks_to_send, level) / throughput ≤ remaining_time
+        best_level = None
+        # 3 -> 2 -> 1 (quality low to high)
+        for level in np.arange(3, 0, -1):
+            total_time = 0.0
+
+            # size(chunks_to_send, level) / throughput
+            for cid in range(chunk_id, num_chunks):
+                bytestream_tail = pickle.load(
+                    open(f"{args.save_dir}/{doc_id}_{cid}_{level}.pkl", "rb")
+                )
+                total_time += len(bytestream_tail) / 1e9 * 8.0 / bw
+
+            # under this quant level, all left chunks can be in remaining_time
+            if total_time <= remaining_time:
+                best_level = level
+                break
+
+        if best_level is None:
+            # not able to finish; select level 3 (bad quality but fast)
+            best_level = 3
+
+        # cur_chunk = encode(chunk_data, level
+        bytestream_cur = pickle.load(
+            open(f"{args.save_dir}/{doc_id}_{chunk_id}_{best_level}.pkl", "rb")
+        )
+        download_time_cur = len(bytestream_cur) / 1e9 * 8.0 / bw
+        ttft += download_time_cur
+        configs.append(best_level)
+
+    return ttft, configs
+
 def merge_kv(left, right, free_left = False, free_right = False):
     """
     Merges two kv caches, returns a merged KV cache

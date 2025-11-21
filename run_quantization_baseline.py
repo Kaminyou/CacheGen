@@ -59,13 +59,13 @@ if __name__ == "__main__":
         prediction = tokenizer.decode(generated[0][input_ids.shape[1]:], skip_special_tokens=True)
         print(f"doc id: {doc_id}", tokenizer.decode(generated[0][input_ids.shape[1]:], skip_special_tokens=True))
         if args.calculate_metric == 1:
-            if args.dataset_name == "longchat":
+            if args.dataset_name == "longchat" or args.dataset_name == 'qasper':
                 metric = calculate_acc(args.dataset_name, prediction, data[doc_id]['label'])
                 average_acc += [metric]
             elif args.dataset_name == "nqa" or args.dataset_name == "tqa":
                 metric = calculate_acc(args.dataset_name, prediction, data[doc_id])
                 average_acc += [metric]
-    if args.dataset_name == "longchat":
+    if args.dataset_name == "longchat" or args.dataset_name == 'qasper':
         metric_name = "accuracy"
     else:
         metric_name = "F1 score"

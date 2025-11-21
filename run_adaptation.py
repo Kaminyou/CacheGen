@@ -12,6 +12,7 @@ from lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
 from lmcache.storage_backend.serde.cachegen_encoder import CacheGenSerializer
 from lmcache.storage_backend.serde.cachegen_decoder import CacheGenDeserializer
 from src.utils import *
+import math
 
 
 p = argparse.ArgumentParser()
@@ -28,6 +29,7 @@ p.add_argument("--dataset_name", type=str)
 p.add_argument("--encode", action="store_true")
 p.add_argument("--total_traces", type=int, default=5)
 p.add_argument("--calculate_metric", type=int, default=0)
+p.add_argument("--use_paper_algorithm", action='store_true')
 args = p.parse_args()
 if __name__ == "__main__":
     # Check if save_dir exists
@@ -58,11 +60,12 @@ if __name__ == "__main__":
             kv = tuple(kv)
             pickle.dump(kv, open(f"{args.save_dir}/raw_kv_{doc_id}.pkl", "wb"))
             kv_tensor = to_blob(kv)
-            num_chunks = (input_ids.shape[-1] // args.chunk_size)
+            # num_chunks = (input_ids.shape[-1] // args.chunk_size)
+            num_chunks = math.ceil(input_ids.shape[-1] / args.chunk_size)
             chunk_id = 0
             for chunk_start in range(0, input_ids.shape[-1], args.chunk_size):
                 
-                for quant_level in range(1, 4):
+                for quant_level in range(1, 4):  # 1 best 3 worst
                     os.environ["QUANT_LEVEL"] = str(quant_level)
                     lmcache_config = LMCacheEngineConfig.from_defaults(chunk_size=args.chunk_size)
                     meta_data = LMCacheEngineMetadata(model_name=args.model_id, fmt="huggingface", world_size=1, worker_id=0)
@@ -90,12 +93,20 @@ if __name__ == "__main__":
                     layer_to_device_id[i] = kv[i][0].device.index
                 text = data[doc_id]['prompt']
                 input_ids = tokenizer(text, return_tensors="pt").input_ids.cuda()
-                ttft, configs = config_selection(all_bws, 
-                                            chunk_delay, 
-                                            args, 
-                                            input_ids.shape[-1],
-                                            doc_id,
-                                            )
+                if args.use_paper_algorithm:
+                    ttft, configs = config_selection_paper(all_bws, 
+                                                chunk_delay, 
+                                                args, 
+                                                input_ids.shape[-1],
+                                                doc_id,
+                                                )
+                else:
+                    ttft, configs = config_selection(all_bws, 
+                                                chunk_delay, 
+                                                args, 
+                                                input_ids.shape[-1],
+                                                doc_id,
+                                                )
                 concated_kv = merge(configs, args, doc_id, input_ids.shape[-1], kv, layer_to_device_id)
                 adapt_output = model.generate(input_ids, past_key_values=concated_kv, max_new_tokens=20)
                 prediction = tokenizer.decode(adapt_output[0][input_ids.shape[1]:], skip_special_tokens=True)
@@ -103,7 +114,7 @@ if __name__ == "__main__":
                 if ttft > args.slo:
                     violation_rate += 1
                 if args.calculate_metric == 1:
-                    if args.dataset_name == "longchat":
+                    if args.dataset_name == "longchat" or args.dataset_name == 'qasper':
                         metric = calculate_acc(args.dataset_name, prediction, data[doc_id]['label'])
                         average_acc += [metric]
                     elif args.dataset_name == "nqa" or args.dataset_name == "tqa":
