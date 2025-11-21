@@ -12,13 +12,14 @@ python run_adaptation.py \
 
 
 python run_adaptation.py \
---model_id ${MODEL} \
+--model_id "mistral-community/Mistral-7B-v0.2" \
 --num_gpus 1 \
 --dataset_name longchat \
---save_dir ${SAVE_DIR}/${MODEL}_encoded \
+--save_dir ./mistral-community/Mistral-7B-v0.2_encoded \
 --start 0 \
 --end 50 \
 --slo 0.5 \
 --chunk_size 1500 \
 --total_traces 5 \
---calculate_metric 1 
+--calculate_metric 1 \
+--use_paper_algorithm   # optional: remove it = author's implementation
